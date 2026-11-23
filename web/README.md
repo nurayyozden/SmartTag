@@ -1,7 +1,7 @@
 # Smart Tag website
 
 The phone side of the system. It photographs a garment and its care label,
-works out the colour and fibre composition, lets you correct them, and saves
+works out the garment type, colour and fibre composition, lets you correct them, and saves
 the garment to Supabase. The ESP32 **tagging station** then writes the record
 to a blank NFC tag, and this page shows "Tag written ✓".
 
@@ -16,6 +16,8 @@ is why the station writes the tags rather than the phone.
 | `style.css` | Layout and colours (light and dark mode) |
 | `config.js` | Your Supabase URL and publishable key |
 | `analysis.js` | Fibre parsing from label text, colour detection, the tag record |
+| `classify.js` | Garment type from the photo (Marqo-FashionCLIP, runs in the browser) |
+| `category_embeddings.json` | The garment types as the classifier sees them; made by `tools/build_category_embeddings.py` |
 | `app.js` | The flow: photos, text recognition, review, saving, waiting for the station |
 
 ## 1. Connect it to Supabase
@@ -59,16 +61,21 @@ The page should switch to "Tag written ✓" within a few seconds.
 
 ## How it works
 
-1. **Colour:** the central 60% of the garment photo is grouped into four
+1. **Garment type:** Marqo-FashionCLIP compares the photo with a text
+   description of each garment type and picks the closest. If it's at least
+   50% sure, the type is pre-selected; otherwise it's only suggested. The
+   model (about 87 MB) downloads from Hugging Face once, starting as soon as
+   the garment photo is chosen, and the browser keeps it.
+2. **Colour:** the central 60% of the garment photo is grouped into four
    colours (k-means); the biggest group is named, e.g. BLU.
-2. **Fibres:** Tesseract.js reads the label text in the browser; the parser
+3. **Fibres:** Tesseract.js reads the label text in the browser; the parser
    finds pairs like "60% Cotton" or "CO 60%" in several languages, ignores the
    lining section and repeated languages, and maps them to fibre codes.
-3. **Review:** you correct anything; percentages must total 100%, or you tick
+4. **Review:** you correct anything; percentages must total 100%, or you tick
    "Composition unknown" (the machine then keeps the platform level).
-4. **Save:** a `clothing` row (`tag_status = 'pending'`) plus one
+5. **Save:** a `clothing` row (`tag_status = 'pending'`) plus one
    `garment_fibre` row per fibre.
-5. **Wait:** Supabase Realtime (with polling every 3 s as a backup) watches
+6. **Wait:** Supabase Realtime (with polling every 3 s as a backup) watches
    for the station to set `tag_status = 'written'`.
 
 The tag record the station should write looks like:
@@ -87,4 +94,10 @@ The tag record the station should write looks like:
 - Only the eight fibres in the `fibre` table can be saved. To add more, insert
   rows there (e.g. `insert into fibre (code, name) values ('SE', 'Silk');`)
   and add their label words to `SYNONYMS` in `analysis.js`.
-- The garment type is chosen by hand for now; a classifier can fill it in later.
+- The classifier only knows the garment types listed in
+  `tools/build_category_embeddings.py`, matched to the `garment_category`
+  table **by name**. After adding or renaming a type in Supabase, update that
+  list, run the script (instructions at its top) and commit the new
+  `category_embeddings.json`. "Other" is deliberately not in the list.
+- If the model can't load (offline, very old browser), the garment type is
+  simply left for you to choose.

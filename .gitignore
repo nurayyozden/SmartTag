@@ -8,3 +8,6 @@ src/nfc_station/secrets.h
 # macOS and local tool settings
 .DS_Store
 .claude/settings.local.json
+
+# Python virtual environment for tools/
+.venv/

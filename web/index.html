@@ -32,6 +32,11 @@
     <section data-step="garment" hidden>
       <h2><span class="num">1</span> Photo of the garment</h2>
       <p class="hint">Lay it flat and fill the frame, so the background shows as little as possible.</p>
+      <figure class="example">
+        <img src="images/example-garment.jpg" width="150" height="200"
+          alt="Example: a denim skirt laid flat on the floor, filling most of the photo">
+        <figcaption>Example of a good photo</figcaption>
+      </figure>
       <label class="photo-btn">
         <input id="in-garment" type="file" accept="image/*" capture="environment">
         Take or choose photo
@@ -74,6 +79,7 @@
       <label class="field">Garment type
         <select id="sel-category"></select>
       </label>
+      <p id="category-hint" class="hint"></p>
 
       <label class="field">Colour
         <span class="colour-row">

@@ -2,6 +2,7 @@
 //
 // Flow
 //   1. Garment photo  -> dominant colour (analysis.js)
+//                        + garment type (classify.js, Marqo-FashionCLIP)
 //   2. Label photo    -> text recognition (Tesseract.js) -> fibres (analysis.js)
 //   3. Review         -> user corrects category, colour, fibres
 //   4. Save           -> clothing row (tag_status = 'pending') + garment_fibre rows
@@ -14,6 +15,11 @@ import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 import {
   parseFibres, dominantColour, COLOUR_GROUPS, buildTagRecord,
 } from "./analysis.js";
+import { preloadClassifier, classifyGarment } from "./classify.js";
+
+// Below this probability the guessed garment type is shown as a suggestion
+// but not pre-selected, so the user has to choose.
+const CATEGORY_MIN_CONFIDENCE = 0.5;
 
 const CONFIGURED = !SUPABASE_URL.includes("YOUR-") && !SUPABASE_KEY.includes("YOUR-");
 const db = CONFIGURED ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
@@ -86,6 +92,8 @@ function wirePhoto(inputId, previewId, nextId, key) {
     img.src = URL.createObjectURL(file);
     img.hidden = false;
     $(nextId).disabled = false;
+    // Start downloading the garment-type model while the user takes the label photo.
+    if (key === "garmentFile") preloadClassifier();
   });
 }
 
@@ -113,6 +121,7 @@ function setProgress(fraction, text) {
 async function analyse() {
   show("analysing");
   let colour = null;
+  let guesses = null;
   let parsed = { fibres: [], total: 0, unknownWords: [], confident: false };
   state.ocrText = "";
 
@@ -124,13 +133,25 @@ async function analyse() {
     console.warn("Colour detection failed", err);
   }
 
+  // Progress bar: colour 0-5%, garment type 5-35%, label 35-100%
+  // (garment type gets 5-100% when there is no label photo).
+  const typeEnd = state.labelFile ? 0.35 : 1;
+  try {
+    setProgress(0.05, "Working out the garment type…");
+    guesses = await classifyGarment(state.garmentFile, (f) => setProgress(
+      0.05 + (typeEnd - 0.05) * f,
+      `Downloading the garment-type model (first time only)… ${Math.round(f * 100)}%`));
+  } catch (err) {
+    console.warn("Garment type detection failed", err);
+  }
+
   if (state.labelFile) {
     try {
-      setProgress(0.1, "Reading the care label… (the first time takes longer)");
+      setProgress(typeEnd, "Reading the care label… (the first time takes longer)");
       const result = await window.Tesseract.recognize(state.labelFile, "eng", {
         logger: (m) => {
           if (m.status === "recognizing text") {
-            setProgress(0.1 + 0.9 * m.progress, "Reading the care label…");
+            setProgress(typeEnd + (1 - typeEnd) * m.progress, "Reading the care label…");
           }
         },
       });
@@ -142,7 +163,7 @@ async function analyse() {
   }
 
   setProgress(1, "Done");
-  fillReview(colour, parsed);
+  fillReview(colour, parsed, guesses);
   show("review");
 }
 
@@ -150,10 +171,11 @@ async function analyse() {
 // Review
 // ---------------------------------------------------------------
 
-function fillReview(colour, parsed) {
+function fillReview(colour, parsed, guesses) {
   const cat = $("sel-category");
   cat.innerHTML = `<option value="">Choose…</option>` +
     state.categories.map((c) => `<option value="${c.category_id}">${c.name}</option>`).join("");
+  fillCategoryGuess(guesses);
 
   const col = $("sel-colour");
   col.innerHTML = `<option value="">Choose…</option>` +
@@ -181,6 +203,28 @@ function fillReview(colour, parsed) {
   $("review-error").textContent = "";
   updateUnknown();
   updateTotal();
+}
+
+// Pre-selects the classifier's guess if it is confident; otherwise only
+// suggests it. Guesses are matched to garment_category rows by name.
+function fillCategoryGuess(guesses) {
+  const hint = $("category-hint");
+  const byName = (name) => state.categories.find(
+    (c) => c.name.trim().toLowerCase() === name.trim().toLowerCase());
+  const known = (guesses || [])
+    .map((g) => ({ ...g, category: byName(g.name) }))
+    .filter((g) => g.category);
+  const pct = (g) => `${g.category.name} (${Math.round(g.prob * 100)}%)`;
+
+  if (known.length === 0) {
+    hint.textContent = guesses ? "" : "Couldn't work out the garment type: choose it.";
+  } else if (known[0].prob >= CATEGORY_MIN_CONFIDENCE) {
+    $("sel-category").value = String(known[0].category.category_id);
+    hint.textContent = `Looks like: ${pct(known[0])}. Change it if that's wrong.`;
+  } else {
+    const second = known[1] ? ` or ${pct(known[1])}` : "";
+    hint.textContent = `Not sure: maybe ${pct(known[0])}${second}. Choose one.`;
+  }
 }
 
 function addFibreRow(code = "", pct = "") {

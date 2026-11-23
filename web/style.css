@@ -1,3 +1,6 @@
+/* Anything marked hidden stays hidden, even if a rule below gives it a display. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #f6f5f1;
   --card: #ffffff;
@@ -69,6 +72,11 @@ button.small { padding: 6px 12px; font-size: 14px; }
 button:disabled { opacity: 0.45; cursor: default; }
 .photo-btn { display: block; text-align: center; border-style: dashed; padding: 18px; }
 .photo-btn input { display: none; }
+.example { margin: 12px auto; max-width: 150px; text-align: center; }
+.example img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+.example figcaption { color: var(--muted); font-size: 13px; margin-top: 4px; }
+/* Once the user's own photo is showing, the example is no longer needed. */
+section:has(.preview:not([hidden])) .example { display: none; }
 .preview { display: block; width: 100%; max-height: 320px; object-fit: contain; margin-top: 12px; border-radius: 8px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
 .actions .back { margin-right: auto; }
