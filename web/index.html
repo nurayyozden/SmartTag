@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Smart Tag</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Text recognition for care labels (runs in the browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Smart Tag</h1>
+    <p class="sub">Garment tagging for textile recycling</p>
+  </header>
+
+  <div id="demo-banner" class="banner" hidden>
+    Demo mode: not connected to Supabase, so nothing is saved.
+    Add your project URL and key in <code>config.js</code>.
+  </div>
+
+  <main>
+    <!-- 0. Start -->
+    <section data-step="start">
+      <p>Photograph a garment and its care label. The details are checked by you,
+        saved, and then written to a tag at the tagging station.</p>
+      <button id="btn-start" class="primary">Tag a garment</button>
+      <p id="start-status" class="hint"></p>
+    </section>
+
+    <!-- 1. Garment photo -->
+    <section data-step="garment" hidden>
+      <h2><span class="num">1</span> Photo of the garment</h2>
+      <p class="hint">Lay it flat and fill the frame, so the background shows as little as possible.</p>
+      <label class="photo-btn">
+        <input id="in-garment" type="file" accept="image/*" capture="environment">
+        Take or choose photo
+      </label>
+      <img id="prev-garment" class="preview" alt="Garment photo preview" hidden>
+      <div class="actions">
+        <button class="back" data-go="start">Back</button>
+        <button id="btn-garment-next" class="primary" disabled>Next</button>
+      </div>
+    </section>
+
+    <!-- 2. Care label photo -->
+    <section data-step="label" hidden>
+      <h2><span class="num">2</span> Photo of the care label</h2>
+      <p class="hint">Flatten the label and get close, so the fibre percentages are sharp.</p>
+      <label class="photo-btn">
+        <input id="in-label" type="file" accept="image/*" capture="environment">
+        Take or choose photo
+      </label>
+      <img id="prev-label" class="preview" alt="Care label photo preview" hidden>
+      <div class="actions">
+        <button class="back" data-go="garment">Back</button>
+        <button id="btn-no-label" class="secondary">No label</button>
+        <button id="btn-label-next" class="primary" disabled>Analyse</button>
+      </div>
+    </section>
+
+    <!-- 3. Analysing -->
+    <section data-step="analysing" hidden>
+      <h2>Analysing</h2>
+      <p id="progress-text">Starting…</p>
+      <div class="bar"><div id="progress-bar"></div></div>
+    </section>
+
+    <!-- 4. Review -->
+    <section data-step="review" hidden>
+      <h2><span class="num">3</span> Check the details</h2>
+      <p class="hint">Correct anything that's wrong before saving.</p>
+
+      <label class="field">Garment type
+        <select id="sel-category"></select>
+      </label>
+
+      <label class="field">Colour
+        <span class="colour-row">
+          <span id="swatch" class="swatch"></span>
+          <select id="sel-colour"></select>
+        </span>
+      </label>
+
+      <fieldset>
+        <legend>Fibre composition</legend>
+        <p id="fibre-source" class="hint"></p>
+        <div id="fibre-rows"></div>
+        <button id="btn-add-fibre" class="secondary small">Add fibre</button>
+        <p id="fibre-total" class="total"></p>
+        <label class="check">
+          <input id="chk-unknown" type="checkbox"> Composition unknown (send for manual check)
+        </label>
+        <details id="ocr-details">
+          <summary>Text read from the label</summary>
+          <pre id="ocr-text"></pre>
+        </details>
+      </fieldset>
+
+      <p id="review-error" class="error" role="alert"></p>
+      <div class="actions">
+        <button class="back" data-go="label">Back</button>
+        <button id="btn-confirm" class="primary">Save and tag</button>
+      </div>
+    </section>
+
+    <!-- 5. Waiting for the station -->
+    <section data-step="tagging" hidden>
+      <h2><span class="num">4</span> Tap a blank tag on the station</h2>
+      <div class="pulse"></div>
+      <p>Hold a blank hang tag on the tagging station's reader. This page updates
+        when the tag has been written.</p>
+      <p class="hint">Record <code id="rec-id"></code></p>
+      <details>
+        <summary>What will be written to the tag</summary>
+        <pre id="tag-preview"></pre>
+      </details>
+      <button id="btn-simulate" class="secondary" hidden>Simulate the station (demo)</button>
+      <p class="hint">Leaving this page doesn't cancel the garment: the station writes
+        saved garments in order, oldest first.</p>
+    </section>
+
+    <!-- 6. Done -->
+    <section data-step="done" hidden>
+      <h2 class="ok">Tag written ✓</h2>
+      <p>Attach the tag to the garment.</p>
+      <p class="hint">Tag ID <code id="done-uid"></code></p>
+      <button id="btn-again" class="primary">Tag another garment</button>
+    </section>
+
+    <!-- Error -->
+    <section data-step="error" hidden>
+      <h2>Something went wrong</h2>
+      <p id="error-text" class="error"></p>
+      <button id="btn-error-back" class="primary">Start again</button>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

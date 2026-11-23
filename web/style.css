@@ -1,0 +1,104 @@
+:root {
+  --bg: #f6f5f1;
+  --card: #ffffff;
+  --ink: #1f1e1b;
+  --muted: #6b6963;
+  --line: #dcd9d0;
+  --accent: #1d7a5c;
+  --accent-ink: #ffffff;
+  --error: #b42318;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a18;
+    --card: #252522;
+    --ink: #eceae4;
+    --muted: #a3a097;
+    --line: #3b3a36;
+    --accent: #4cc29a;
+    --accent-ink: #0d1f18;
+    --error: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+header { padding: 20px 16px 8px; max-width: 560px; margin: 0 auto; }
+h1 { margin: 0; font-size: 24px; }
+.sub { margin: 0; color: var(--muted); }
+main { max-width: 560px; margin: 0 auto; padding: 8px 16px 40px; }
+section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 16px;
+}
+h2 { font-size: 19px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+.num {
+  display: inline-grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); font-size: 14px;
+}
+.hint { color: var(--muted); font-size: 14px; }
+.error { color: var(--error); font-size: 14px; min-height: 1em; }
+.ok { color: var(--accent); }
+code { font-size: 13px; }
+pre {
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--bg); padding: 10px; border-radius: 8px; font-size: 13px;
+}
+
+.banner {
+  width: calc(100% - 32px); max-width: 528px; margin: 8px auto; padding: 10px 12px;
+  background: #fff4d6; color: #5c4400; border-radius: 8px; font-size: 14px;
+}
+@media (prefers-color-scheme: dark) { .banner { background: #4a3b10; color: #ffe7a3; } }
+
+button, .photo-btn {
+  font: inherit; border-radius: 8px; padding: 11px 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.small { padding: 6px 12px; font-size: 14px; }
+button:disabled { opacity: 0.45; cursor: default; }
+.photo-btn { display: block; text-align: center; border-style: dashed; padding: 18px; }
+.photo-btn input { display: none; }
+.preview { display: block; width: 100%; max-height: 320px; object-fit: contain; margin-top: 12px; border-radius: 8px; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.actions .back { margin-right: auto; }
+
+.field { display: block; margin: 12px 0; font-weight: 600; font-size: 14px; }
+select, input[type="number"] {
+  display: block; width: 100%; margin-top: 4px; font: inherit; font-weight: 400;
+  padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); color: var(--ink);
+}
+.colour-row { display: flex; gap: 8px; align-items: center; }
+.colour-row select { flex: 1; }
+.swatch { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--line); flex: none; margin-top: 4px; }
+
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0 0; }
+legend { font-weight: 600; font-size: 14px; padding: 0 4px; }
+.fibre-row { display: grid; grid-template-columns: 1fr 92px 40px; gap: 6px; align-items: end; margin-bottom: 6px; }
+.fibre-row button { padding: 9px 0; }
+.total { font-size: 14px; margin: 8px 0; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 8px 0; }
+details { margin-top: 10px; font-size: 14px; }
+
+.bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+#progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+.pulse {
+  width: 64px; height: 64px; margin: 12px auto; border-radius: 50%;
+  border: 3px solid var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { transform: scale(0.9); opacity: 0.6; } 50% { transform: scale(1.05); opacity: 1; } }
+}

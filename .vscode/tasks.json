@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run NFC bridge",
+      "detail": "Connects the ESP32 to Supabase over USB so WRITE mode can tag garments. Type w / s + Enter to switch mode.",
+      "type": "process",
+      "command": "${userHome}/.platformio/penv/bin/python",
+      "args": ["tools/usb_bridge.py"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "runOptions": { "instanceLimit": 1 },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true,
+        "showReuseMessage": false
+      }
+    }
+  ]
+}
