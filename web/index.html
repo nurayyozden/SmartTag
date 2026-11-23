@@ -5,8 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Smart Tag</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Text recognition for care labels (runs in the browser) -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <!-- Where the care-label reader (ocr.js, ppu-paddle-ocr) finds the two
+       libraries it imports by name. Must come before any module script. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/ort.all.bundle.min.mjs",
+        "ppu-ocv/canvas-web": "https://cdn.jsdelivr.net/npm/ppu-ocv@4.0.1/index.canvas-web.js"
+      }
+    }
+  </script>
 </head>
 <body>
   <header>

@@ -20,6 +20,7 @@ The model files (about 250 MB) are downloaded to ~/.cache/smarttag the first
 time.
 """
 
+import hashlib
 import json
 import urllib.request
 from pathlib import Path
@@ -93,8 +94,13 @@ def main():
         out.append({"name": name, "vec": [round(float(v), 5) for v in vec]})
         print(f"  {name}: {len(prompts)} prompts")
 
+    # Changes whenever the prompts change; saved with every prediction so the
+    # accuracy of different prompt versions can be compared in Supabase.
+    fingerprint = hashlib.sha1(json.dumps([CATEGORIES, TEMPLATES]).encode()).hexdigest()[:8]
+
     OUT.write_text(json.dumps({
         "model": MODEL_ID,
+        "version": f"marqo-fashionCLIP/prompts-{fingerprint}",
         "note": "Made by tools/build_category_embeddings.py -- do not edit by hand.",
         "categories": out,
     }, separators=(",", ":")) + "\n")

@@ -8,13 +8,14 @@
 // The browser caches it after the first visit. The photo never leaves the phone.
 //
 //   preloadClassifier()        start downloading early (optional)
-//   classifyGarment(file, cb)  -> [{ name, prob }] best first, probs sum to 1
+//   classifyGarment(file, cb)  -> { guesses: [{ name, prob }] best first (probs sum to 1),
+//                                   embedding: 512 numbers, version }
 
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
 const MODEL_ID = "Marqo/marqo-fashionCLIP";
 const LOGIT_SCALE = 100; // CLIP's temperature: turns similarities into confident probabilities
 
-let loading = null;           // Promise<{ model, processor, RawImage, categories }>
+let loading = null;           // Promise<{ model, processor, RawImage, categories, version }>
 let progressListener = null;  // set while classifyGarment is waiting for the download
 
 function load() {
@@ -25,14 +26,16 @@ function load() {
     const progress_callback = (p) => {
       if (p.status === "progress" && p.file.endsWith(".onnx")) progressListener?.(p.progress / 100);
     };
-    const [model, processor, categories] = await Promise.all([
+    const [model, processor, embeddings] = await Promise.all([
       CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { dtype: "q8", progress_callback }),
       AutoProcessor.from_pretrained(MODEL_ID),
       fetch(new URL("category_embeddings.json", import.meta.url))
-        .then((r) => { if (!r.ok) throw new Error(`category_embeddings.json: ${r.status}`); return r.json(); })
-        .then((j) => j.categories),
+        .then((r) => { if (!r.ok) throw new Error(`category_embeddings.json: ${r.status}`); return r.json(); }),
     ]);
-    return { model, processor, RawImage, categories };
+    // `version` names the prompts the embeddings were made from; it is saved
+    // with every prediction.
+    return { model, processor, RawImage, categories: embeddings.categories,
+      version: embeddings.version || MODEL_ID };
   })();
   // A failed download shouldn't block a retry on the next garment.
   loading.catch(() => { loading = null; });
@@ -51,15 +54,16 @@ export function preloadClassifier() {
 export async function classifyGarment(file, onDownload) {
   progressListener = onDownload;
   try {
-    const { model, processor, RawImage, categories } = await load();
+    const { model, processor, RawImage, categories, version } = await load();
     const image = await RawImage.fromBlob(file);
     const { image_embeds } = await model(await processor(image));
     const img = normalise(image_embeds.data);
     const logits = categories.map((c) => LOGIT_SCALE * dot(img, c.vec));
     const probs = softmax(logits);
-    return categories
+    const guesses = categories
       .map((c, i) => ({ name: c.name, prob: probs[i] }))
       .sort((a, b) => b.prob - a.prob);
+    return { guesses, embedding: img, version };
   } finally {
     progressListener = null;
   }

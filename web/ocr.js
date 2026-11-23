@@ -1,0 +1,78 @@
+// Care-label text recognition: PaddleOCR, run in the browser.
+//
+// Uses ppu-paddle-ocr (PaddleOCR models on ONNX Runtime Web). It finds the
+// lines of text in the photo, then reads each one. The photo never leaves the
+// phone. The model files (about 13 MB) download from Hugging Face the first
+// time and the browser keeps them.
+//
+// The library imports "onnxruntime-web" and "ppu-ocv/canvas-web" by name; the
+// import map in index.html says where to find them.
+//
+//   preloadLabelReader()   start downloading early (optional)
+//   labelReaderReady()     true once the models are loaded
+//   readLabel(file)        -> the label's text, lines separated by "\n"
+
+const PADDLE_URL = "https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.7.1/web/index.js";
+const MODELS = "https://huggingface.co/snowfluke/ppu-paddle-ocr-models/resolve/main";
+
+// Latin-alphabet model: reads English, French, German, Spanish, Italian,
+// Portuguese, Dutch, etc., including accents and "%". Care labels often repeat
+// the composition in other scripts too (Chinese, Cyrillic, Arabic); this model
+// reads those as nonsense, which the fibre parser simply ignores.
+const MODEL = {
+  detection: `${MODELS}/detection/PP-OCRv5_mobile_det_infer.onnx`,
+  recognition: `${MODELS}/recognition/multi/latin/v5/latin_PP-OCRv5_mobile_rec_infer.onnx`,
+  charactersDictionary: `${MODELS}/recognition/multi/latin/v5/ppocrv5_latin_dict.txt`,
+};
+
+// Saved with each fibre prediction (see supabase/prediction.sql). Change it
+// when MODEL or MAX_SIDE changes.
+export const LABEL_READER_VERSION = "ppocr-v5-latin-mobile@2000px";
+
+// Big phone photos are scaled down first. 2000 px keeps small label text
+// readable while using far less memory than a full 12-megapixel image.
+const MAX_SIDE = 2000;
+
+let loading = null; // Promise<PaddleOcrService>
+let ready = false;
+
+function load() {
+  loading ??= (async () => {
+    const { PaddleOcrService } = await import(PADDLE_URL);
+    const service = new PaddleOcrService({ model: MODEL });
+    await service.initialize();
+    ready = true;
+    return service;
+  })();
+  // A failed download shouldn't block a retry on the next garment.
+  loading.catch(() => { loading = null; });
+  return loading;
+}
+
+/** Starts the model download in the background. */
+export function preloadLabelReader() {
+  load().catch((err) => console.warn("Label reader preload failed", err));
+}
+
+/** True once the models are downloaded and ready. */
+export function labelReaderReady() {
+  return ready;
+}
+
+/** Reads the text on a care-label photo (a File or Blob). */
+export async function readLabel(file) {
+  const service = await load();
+  const result = await service.recognize(await toCanvas(file));
+  return result.text || "";
+}
+
+async function toCanvas(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas;
+}

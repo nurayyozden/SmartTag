@@ -3,7 +3,7 @@
 // Flow
 //   1. Garment photo  -> dominant colour (analysis.js)
 //                        + garment type (classify.js, Marqo-FashionCLIP)
-//   2. Label photo    -> text recognition (Tesseract.js) -> fibres (analysis.js)
+//   2. Label photo    -> text recognition (ocr.js, PaddleOCR) -> fibres (analysis.js)
 //   3. Review         -> user corrects category, colour, fibres
 //   4. Save           -> clothing row (tag_status = 'pending') + garment_fibre rows
 //   5. Wait           -> the ESP32 tagging station writes the tag and sets
@@ -13,9 +13,10 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 import {
-  parseFibres, dominantColour, COLOUR_GROUPS, buildTagRecord,
+  parseFibres, dominantColour, COLOUR_GROUPS, buildTagRecord, PARSER_VERSION, COLOUR_VERSION,
 } from "./analysis.js";
 import { preloadClassifier, classifyGarment } from "./classify.js";
+import { preloadLabelReader, labelReaderReady, readLabel, LABEL_READER_VERSION } from "./ocr.js";
 
 // Below this probability the guessed garment type is shown as a suggestion
 // but not pre-selected, so the user has to choose.
@@ -41,6 +42,9 @@ const state = {
   labelFile: null,
   ocrText: "",
   colourRgb: null,
+  // What the models guessed for the current garment, saved with it so wrong
+  // guesses can be reviewed (recordPredictions, supabase/prediction.sql).
+  predictions: null,
   clothingId: null,
   channel: null,
   pollTimer: null,
@@ -92,8 +96,8 @@ function wirePhoto(inputId, previewId, nextId, key) {
     img.src = URL.createObjectURL(file);
     img.hidden = false;
     $(nextId).disabled = false;
-    // Start downloading the garment-type model while the user takes the label photo.
-    if (key === "garmentFile") preloadClassifier();
+    // Start downloading the models while the user is still taking photos.
+    if (key === "garmentFile") { preloadClassifier(); preloadLabelReader(); }
   });
 }
 
@@ -121,7 +125,7 @@ function setProgress(fraction, text) {
 async function analyse() {
   show("analysing");
   let colour = null;
-  let guesses = null;
+  let typeResult = null;
   let parsed = { fibres: [], total: 0, unknownWords: [], confident: false };
   state.ocrText = "";
 
@@ -138,7 +142,7 @@ async function analyse() {
   const typeEnd = state.labelFile ? 0.35 : 1;
   try {
     setProgress(0.05, "Working out the garment type…");
-    guesses = await classifyGarment(state.garmentFile, (f) => setProgress(
+    typeResult = await classifyGarment(state.garmentFile, (f) => setProgress(
       0.05 + (typeEnd - 0.05) * f,
       `Downloading the garment-type model (first time only)… ${Math.round(f * 100)}%`));
   } catch (err) {
@@ -147,23 +151,25 @@ async function analyse() {
 
   if (state.labelFile) {
     try {
-      setProgress(typeEnd, "Reading the care label… (the first time takes longer)");
-      const result = await window.Tesseract.recognize(state.labelFile, "eng", {
-        logger: (m) => {
-          if (m.status === "recognizing text") {
-            setProgress(typeEnd + (1 - typeEnd) * m.progress, "Reading the care label…");
-          }
-        },
-      });
-      state.ocrText = result.data.text || "";
+      // PaddleOCR doesn't report its progress, so the bar jumps to halfway.
+      setProgress(typeEnd + (1 - typeEnd) * 0.5, labelReaderReady()
+        ? "Reading the care label…"
+        : "Downloading the label reader (first time only), then reading the care label…");
+      state.ocrText = await readLabel(state.labelFile);
       parsed = parseFibres(state.ocrText);
     } catch (err) {
       console.warn("Text recognition failed", err);
     }
   }
 
+  state.predictions = {
+    garmentType: typeResult,
+    colour: colour?.code ?? null,
+    fibres: state.labelFile ? { ...parsed, fibres: usableFibres(parsed.fibres) } : null,
+  };
+
   setProgress(1, "Done");
-  fillReview(colour, parsed, guesses);
+  fillReview(colour, parsed, typeResult?.guesses ?? null);
   show("review");
 }
 
@@ -184,7 +190,7 @@ function fillReview(colour, parsed, guesses) {
   $("swatch").style.background = colour ? `rgb(${colour.rgb.join(",")})` : "transparent";
 
   $("fibre-rows").innerHTML = "";
-  const usable = parsed.fibres.filter((f) => state.fibres.some((x) => x.code === f.code));
+  const usable = usableFibres(parsed.fibres);
   usable.forEach((f) => addFibreRow(f.code, f.pct));
 
   let source;
@@ -203,6 +209,11 @@ function fillReview(colour, parsed, guesses) {
   $("review-error").textContent = "";
   updateUnknown();
   updateTotal();
+}
+
+// Only fibres in the `fibre` table can be shown and saved.
+function usableFibres(fibres) {
+  return fibres.filter((f) => state.fibres.some((x) => x.code === f.code));
 }
 
 // Pre-selects the classifier's guess if it is confident; otherwise only
@@ -329,6 +340,8 @@ async function save() {
       }
     }
 
+    if (CONFIGURED) recordPredictions(clothingId, checked); // in the background
+
     state.clothingId = clothingId;
     $("rec-id").textContent = clothingId.slice(0, 8);
     $("tag-preview").textContent = buildTagRecord(
@@ -342,6 +355,61 @@ async function save() {
     btn.disabled = false;
     btn.textContent = "Save and tag";
   }
+}
+
+// Saves each model's guess next to what was finally chosen, one row per
+// model, in the `prediction` table (see supabase/prediction.sql). A failure is
+// only logged: it must never get in the way of tagging the garment.
+async function recordPredictions(clothingId, checked) {
+  const p = state.predictions;
+  if (!p) return;
+  const rows = [];
+  const row = (model, model_version, predicted, final, extra = {}) =>
+    rows.push({ clothing_id: clothingId, model, model_version, predicted, final, ...extra });
+
+  if (p.garmentType) {
+    const { guesses, embedding, version } = p.garmentType;
+    const finalName = state.categories.find((c) => c.category_id === checked.categoryId)?.name
+      ?? String(checked.categoryId);
+    row("garment_type", version, guesses[0]?.name ?? "none", finalName, {
+      confidence: guesses[0]?.prob ?? null,
+      details: {
+        top3: guesses.slice(0, 3).map((g) => ({ name: g.name, prob: Math.round(g.prob * 1000) / 1000 })),
+        preselected: (guesses[0]?.prob ?? 0) >= CATEGORY_MIN_CONFIDENCE,
+      },
+      embedding: embedding.map((x) => Math.round(x * 1e6) / 1e6),
+    });
+  }
+
+  row("colour", COLOUR_VERSION, p.colour ?? "none", checked.colour);
+
+  if (p.fibres) {
+    row("fibres", `${LABEL_READER_VERSION}+${PARSER_VERSION}`,
+      formatFibres(p.fibres.fibres) || "none",
+      checked.unknown ? "unknown" : formatFibres(checked.fibres), {
+        details: {
+          ocr_text: state.ocrText,
+          parsed_total: p.fibres.total,
+          unrecognised_words: p.fibres.unknownWords,
+        },
+      });
+  }
+
+  try {
+    const { error } = await db.from("prediction").insert(rows);
+    if (error) throw error;
+  } catch (err) {
+    console.warn("Couldn't record the model predictions (has supabase/prediction.sql been run?)", err);
+  }
+}
+
+// The same fibres always give the same text, so guesses and final answers can
+// be compared: biggest share first, e.g. "CO 95, EL 5".
+function formatFibres(fibres) {
+  return [...fibres]
+    .sort((a, b) => b.pct - a.pct || a.code.localeCompare(b.code))
+    .map((f) => `${f.code} ${f.pct}`)
+    .join(", ");
 }
 
 function waitForStation(clothingId) {

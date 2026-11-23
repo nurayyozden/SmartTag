@@ -16,6 +16,7 @@ is why the station writes the tags rather than the phone.
 | `style.css` | Layout and colours (light and dark mode) |
 | `config.js` | Your Supabase URL and publishable key |
 | `analysis.js` | Fibre parsing from label text, colour detection, the tag record |
+| `ocr.js` | Reads the care-label text (PaddleOCR, runs in the browser) |
 | `classify.js` | Garment type from the photo (Marqo-FashionCLIP, runs in the browser) |
 | `category_embeddings.json` | The garment types as the classifier sees them; made by `tools/build_category_embeddings.py` |
 | `app.js` | The flow: photos, text recognition, review, saving, waiting for the station |
@@ -68,9 +69,12 @@ The page should switch to "Tag written ✓" within a few seconds.
    the garment photo is chosen, and the browser keeps it.
 2. **Colour:** the central 60% of the garment photo is grouped into four
    colours (k-means); the biggest group is named, e.g. BLU.
-3. **Fibres:** Tesseract.js reads the label text in the browser; the parser
-   finds pairs like "60% Cotton" or "CO 60%" in several languages, ignores the
-   lining section and repeated languages, and maps them to fibre codes.
+3. **Fibres:** PaddleOCR (via the ppu-paddle-ocr library) reads the label
+   text in the browser. It uses the Latin-alphabet model (about 13 MB,
+   downloaded once and kept by the browser), so it reads English, French,
+   German, Spanish, Italian and similar languages, accents included. The
+   parser then finds pairs like "60% Cotton" or "CO 60%", ignores the lining
+   section and repeated languages, and maps them to fibre codes.
 4. **Review:** you correct anything; percentages must total 100%, or you tick
    "Composition unknown" (the machine then keeps the platform level).
 5. **Save:** a `clothing` row (`tag_status = 'pending'`) plus one
@@ -84,12 +88,33 @@ The tag record the station should write looks like:
 {"id":"a81f2c3d","cat":3,"col":"BLU","f":[["CO",60],["PES",40]]}
 ```
 
+## Reviewing the models' mistakes
+
+Each saved garment also records what the models guessed (garment type, colour
+and fibres) next to what you finally chose, in the `prediction` table. Set it
+up once: run [`supabase/prediction.sql`](../supabase/prediction.sql) in the
+Supabase SQL Editor. Until then the site works as before and only logs a
+warning in the browser console.
+
+Then, in the Supabase Table Editor:
+
+- **`prediction_mistakes`**: every wrong guess, newest first, e.g.
+  garment_type: Jeans → Jacket / coat (61%). For fibres, `details` holds the
+  text read from the label.
+- **`prediction_accuracy`**: % correct per model and model version. The
+  version changes when the prompts, models or parsing rules change, so you
+  can see whether a change helped.
+
+For the garment type the photo's embedding (512 numbers, not the photo) is
+saved as well. With the type you chose, each one is a labelled example a
+future version of the site can learn from. No photos are stored.
+
 ## Notes and limits
 
 - Photos stay on the phone; only the garment data is saved.
 - The station writes pending garments **oldest first**. A garment saved and
   then abandoned stays first in the queue until it is tagged.
-- Text recognition in the browser is less accurate than Apple's own, so the
+- The label reader can still misread small, curved or shiny labels, so the
   review step matters. Close, flat, well-lit label photos help most.
 - Only the eight fibres in the `fibre` table can be saved. To add more, insert
   rows there (e.g. `insert into fibre (code, name) values ('SE', 'Silk');`)

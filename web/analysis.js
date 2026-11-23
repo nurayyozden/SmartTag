@@ -16,11 +16,15 @@ const SYNONYMS = {
   PES: ["PES", "PL", "POLYESTER", "POLIESTER", "POLIESTERE"],
   WO:  ["WO", "WV", "WOOL", "LAINE", "WOLLE", "LANA", "WOL", "MERINO"],
   PA:  ["PA", "NYLON", "POLYAMIDE", "POLYAMID", "POLIAMIDA", "POLIAMMIDE"],
-  EL:  ["EL", "EA", "ELASTANE", "ELASTHAN", "ELASTAN", "ELASTANO", "SPANDEX", "LYCRA"],
+  EL:  ["EL", "EA", "ELASTANE", "ELASTHAN", "ELASTHANNE", "ELASTAN", "ELASTANO", "SPANDEX", "LYCRA"],
   VI:  ["VI", "CV", "VISCOSE", "VISKOSE", "VISCOSA", "RAYON"],
   LI:  ["LI", "LINEN", "LIN", "LEINEN", "LINO"],
   PAN: ["PAN", "ACRYLIC", "ACRYLIQUE", "ACRYL", "ACRILICO"],
 };
+
+// Saved with each fibre prediction (see supabase/prediction.sql). Increase it
+// when the parsing rules or SYNONYMS change, to compare accuracy before/after.
+export const PARSER_VERSION = "parser-2";
 
 const WORD_TO_CODE = new Map();
 for (const [code, words] of Object.entries(SYNONYMS)) {
@@ -148,6 +152,9 @@ export function nameColour(r, g, b) {
  * Returns { code, rgb: [r, g, b], share } where share is the fraction of
  * pixels in that group.
  */
+// Saved with each colour prediction. Increase it when the colour rules change.
+export const COLOUR_VERSION = "kmeans4-v1";
+
 export function dominantColour(pixels, w, h, k = 4) {
   const pts = [];
   const x0 = Math.floor(w * 0.2), x1 = Math.ceil(w * 0.8);
