@@ -1,6 +1,13 @@
 # Publishes the web/ folder to GitHub Pages:
 #   https://nurayyozden.github.io/SmartTag/
-# Runs on every push to main that changes web/, or manually from the Actions tab.
+# Runs on every push to main that changes web/, or manually from the Actions tab
+# (Actions -> "Deploy website to GitHub Pages" in the left sidebar -> Run workflow).
+#
+# Two jobs, as in GitHub's own Pages template: `upload` packs the site and
+# `deploy` publishes it. With both in one job, the publish step sometimes
+# looked for the upload before GitHub had registered it ("No artifacts named
+# github-pages were found"); a separate job only starts once the upload job
+# has fully finished.
 name: Deploy website to GitHub Pages
 
 on:
@@ -16,21 +23,28 @@ permissions:
   pages: write
   id-token: write
 
+# One deployment at a time. A newer push waits for the running one instead of
+# cancelling it halfway through publishing.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+
   deploy:
+    needs: upload
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: web
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
