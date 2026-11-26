@@ -34,13 +34,19 @@ function load() {
     ]);
     // `version` names the prompts the embeddings were made from; it is saved
     // with every prediction.
-    return { model, processor, RawImage, categories: embeddings.categories,
-      version: embeddings.version || MODEL_ID };
+    lastVersion = embeddings.version || MODEL_ID;
+    return { model, processor, RawImage, categories: embeddings.categories, version: lastVersion };
   })();
   // A failed download shouldn't block a retry on the next garment.
   loading.catch(() => { loading = null; });
   return loading;
 }
+
+/** The classifier's version for the prediction log, even if it failed to load. */
+export function classifierVersion() {
+  return lastVersion;
+}
+let lastVersion = MODEL_ID;
 
 /** Starts the model download in the background, e.g. once a photo is chosen. */
 export function preloadClassifier() {
@@ -54,9 +60,13 @@ export function preloadClassifier() {
 export async function classifyGarment(file, onDownload) {
   progressListener = onDownload;
   try {
-    const { model, processor, RawImage, categories, version } = await load();
-    const image = await RawImage.fromBlob(file);
-    const { image_embeds } = await model(await processor(image));
+    let loaded, image, image_embeds;
+    try { loaded = await load(); } catch (e) { throw atStage(e, "loading the garment-type model"); }
+    const { model, processor, RawImage, categories, version } = loaded;
+    try { image = await RawImage.fromBlob(file); } catch (e) { throw atStage(e, "preparing the photo"); }
+    try { ({ image_embeds } = await model(await processor(image))); } catch (e) {
+      throw atStage(e, `classifying the photo (${image.width}x${image.height})`);
+    }
     const img = normalise(image_embeds.data);
     const logits = categories.map((c) => LOGIT_SCALE * dot(img, c.vec));
     const probs = softmax(logits);
@@ -67,6 +77,15 @@ export async function classifyGarment(file, onDownload) {
   } finally {
     progressListener = null;
   }
+}
+
+// Marks which step an error came from (saved with failed predictions, see
+// recordPredictions in app.js). Some libraries throw plain strings, so those
+// are wrapped in an Error first.
+function atStage(err, stage) {
+  const e = err instanceof Error ? err : new Error(String(err));
+  e.stage ??= stage;
+  return e;
 }
 
 function normalise(v) {

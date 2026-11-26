@@ -24,7 +24,7 @@ const SYNONYMS = {
 
 // Saved with each fibre prediction (see supabase/prediction.sql). Increase it
 // when the parsing rules or SYNONYMS change, to compare accuracy before/after.
-export const PARSER_VERSION = "parser-2";
+export const PARSER_VERSION = "parser-3";
 
 const WORD_TO_CODE = new Map();
 for (const [code, words] of Object.entries(SYNONYMS)) {
@@ -39,6 +39,9 @@ export function normalise(text) {
     .normalize("NFD").replace(/[̀-ͯ]/g, "")   // strip accents
     .toUpperCase()
     .replace(/(\d)O(?=\s*%)/g, "$10")                   // OCR: "6O%" -> "60%"
+    .replace(/(\d)\s*%+/g, "$1%")                        // OCR: "60%%" -> "60%"
+    .replace(/\b(\d{1,3}) ?CL\b/g, "$1%")                // OCR: "60CL" -> "60%" (% misread)
+    .replace(/\b(\d{1,3}) ?- ?(?=[A-Z]{4})/g, "$1% ")    // OCR: "100-COTON" -> "100% COTON"
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -49,9 +52,57 @@ export function normalise(text) {
  * the short codes ("60% CO"), several languages, labels that repeat
  * the composition in each language, and a separate lining section.
  *
- * Returns { fibres: [{code, pct}], total, unknownWords, confident }.
+ * Returns { fibres: [{code, pct}], total, unknownWords, confident, assumed }.
  * `confident` is true when the percentages add up to exactly 100.
+ * `assumed` is true when no percentage was readable and the label named a
+ * single fibre, which is then taken to be 100%.
  */
+// Turns (percentage, word) pairs into fibres, skipping words that aren't
+// fibres and the same composition repeated in other languages.
+function collectFibres(pairs) {
+  const fibres = [];
+  const unknown = new Set();
+  let total = 0;
+  for (const { pct, word } of pairs) {
+    const code = lookupFibre(word);
+    if (!code) { unknown.add(word); continue; }
+    if (pct < 1 || pct > 100) continue;
+    if (fibres.some((f) => f.code === code)) continue;  // same fibre in another language
+    if (total + pct > 100) continue;                    // repeated block in another language
+    fibres.push({ code, pct });
+    total += pct;
+  }
+  return { fibres, total, unknown };
+}
+
+// The fibre code for a label word. Text recognition often gets one letter
+// wrong ("POLVESTER", "ALGOON"), so words of 5+ letters may be one edit away
+// from a known word, as long as only one fibre is that close. Short codes
+// (CO, PES, EL...) must match exactly: one letter off is another fibre.
+function lookupFibre(word) {
+  const exact = WORD_TO_CODE.get(word);
+  if (exact || word.length < 5) return exact ?? null;
+  const close = new Set();
+  for (const [known, code] of WORD_TO_CODE) {
+    if (known.length >= 5 && withinOneEdit(word, known)) close.add(code);
+  }
+  return close.size === 1 ? [...close][0] : null;
+}
+
+// True if `a` becomes `b` by changing, adding or removing at most one letter.
+function withinOneEdit(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (a.length < b.length) j++;
+    else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
 export function parseFibres(rawText) {
   const text = normalise(rawText);
 
@@ -64,30 +115,43 @@ export function parseFibres(rawText) {
   }
 
   // Labels put the number either before or after the fibre name. Try both
-  // readings and keep the one that recognises more fibres (ties go to
-  // number-first, the most common layout). Mixing them would pair a number
-  // with the wrong fibre.
+  // readings and keep the better one: first the one that adds up to 100%,
+  // then the one that recognises more fibres (ties go to number-first, the
+  // most common layout). Mixing them would pair a number with the wrong
+  // fibre.
   const pctFirst = [...section.matchAll(/(\d{1,3})\s*%\s*([A-Z]+)/g)]
     .map((m) => ({ pct: Number(m[1]), word: m[2] }));
   const wordFirst = [...section.matchAll(/([A-Z]+)\s*(\d{1,3})\s*%/g)]
     .map((m) => ({ pct: Number(m[2]), word: m[1] }));
-  const known = (list) => list.filter((e) => WORD_TO_CODE.has(e.word)).length;
-  const pairs = known(pctFirst) >= known(wordFirst) ? pctFirst : wordFirst;
+  const a = collectFibres(pctFirst);
+  const b = collectFibres(wordFirst);
+  const score = (r) => (r.total === 100 ? 1000 : 0) + r.fibres.length;
+  const { fibres, total, unknown } = score(b) > score(a) ? b : a;
 
-  const fibres = [];
-  const unknown = new Set();
-  let total = 0;
-  for (const { pct, word } of pairs) {
-    const code = WORD_TO_CODE.get(word);
-    if (!code) { unknown.add(word); continue; }
-    if (pct < 1 || pct > 100) continue;
-    if (fibres.some((f) => f.code === code)) continue;  // same fibre in another language
-    if (total + pct > 100) continue;                    // repeated block in another language
-    fibres.push({ code, pct });
-    total += pct;
+  if (fibres.length === 0) {
+    const single = singleFibreWord(section);
+    if (single) {
+      return { fibres: [{ code: single, pct: 100 }], total: 100, unknownWords: [],
+        confident: false, assumed: true };
+    }
   }
+  return { fibres, total, unknownWords: [...unknown], confident: total === 100, assumed: false };
+}
 
-  return { fibres, total, unknownWords: [...unknown], confident: total === 100 };
+// When no percentages could be read at all: if the label names exactly one
+// fibre (in any number of languages), it is almost certainly 100% of it.
+// Text recognition often loses the "%" sign on woven labels ("1OOR COTTON",
+// "OOCOTTON"), which is when this matters. Short codes (CO, PL...) are
+// ignored here: "MANAGEMENT CO." is not cotton.
+function singleFibreWord(text) {
+  const codes = new Set();
+  for (const [word] of text.matchAll(/[A-Z]{5,}/g)) {
+    // A number glued to the word, read as letters: "OOCOTTON" -> "COTTON".
+    const stripped = word.replace(/^[OIL]+/, "");
+    const code = lookupFibre(word) ?? (stripped.length >= 5 ? lookupFibre(stripped) : null);
+    if (code) codes.add(code);
+  }
+  return codes.size === 1 ? [...codes][0] : null;
 }
 
 // ---------------------------------------------------------------

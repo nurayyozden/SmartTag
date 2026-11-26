@@ -105,6 +105,21 @@ Then, in the Supabase Table Editor:
   version changes when the prompts, models or parsing rules change, so you
   can see whether a change helped.
 
+When a model fails on the phone (instead of just guessing wrong), the error
+is saved in that row's `details -> 'error'`: the message, the step it failed
+at (loading the model, preparing the photo, reading it), the photo's size and
+the browser. To list them, run in the SQL Editor:
+
+```sql
+select created_at, model,
+       details -> 'error' ->> 'stage'   as stage,
+       details -> 'error' ->> 'message' as message,
+       details -> 'error' ->> 'browser' as browser
+from prediction
+where details ? 'error'
+order by created_at desc;
+```
+
 For the garment type the photo's embedding (512 numbers, not the photo) is
 saved as well. With the type you chose, each one is a labelled example a
 future version of the site can learn from. No photos are stored.

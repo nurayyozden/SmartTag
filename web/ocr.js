@@ -61,9 +61,22 @@ export function labelReaderReady() {
 
 /** Reads the text on a care-label photo (a File or Blob). */
 export async function readLabel(file) {
-  const service = await load();
-  const result = await service.recognize(await toCanvas(file));
+  let service, canvas, result;
+  try { service = await load(); } catch (e) { throw atStage(e, "loading the label reader"); }
+  try { canvas = await toCanvas(file); } catch (e) { throw atStage(e, "preparing the photo"); }
+  try { result = await service.recognize(canvas); } catch (e) {
+    throw atStage(e, `reading the photo (${canvas.width}x${canvas.height})`);
+  }
   return result.text || "";
+}
+
+// Marks which step an error came from (saved with failed predictions, see
+// recordPredictions in app.js). Some libraries throw plain strings, so those
+// are wrapped in an Error first.
+function atStage(err, stage) {
+  const e = err instanceof Error ? err : new Error(String(err));
+  e.stage ??= stage;
+  return e;
 }
 
 async function toCanvas(file) {

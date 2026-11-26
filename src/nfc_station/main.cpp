@@ -351,7 +351,16 @@ void loopWrite() {
 
   if (!USE_WIFI) {
     // The laptop bridge updates Supabase and then sends the next job.
-    Serial.printf("@WROTE %s %s\n", job.clothingId.c_str(), uidStr.c_str());
+    // Characters can get lost on the USB cable while the reader's radio is
+    // busy, so wait for things to settle, then send the confirmation three
+    // times; the bridge acts on the first copy that arrives intact.
+    Serial.flush();
+    delay(150);
+    for (int i = 0; i < 3; i++) {
+      Serial.printf("@WROTE %s %s\n", job.clothingId.c_str(), uidStr.c_str());
+      Serial.flush();
+      delay(30);
+    }
     haveJob = false;
     return;
   }

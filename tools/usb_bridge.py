@@ -41,6 +41,9 @@ ROOT = Path(__file__).resolve().parent.parent
 POLL_SECONDS = 3
 BAUD = 115200
 
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+TAG_UID_RE = re.compile(r"(?:[0-9A-F]{2}:){3,9}[0-9A-F]{2}")
+
 
 # ---------------------------------------------------------------
 # Supabase
@@ -91,11 +94,15 @@ class Supabase:
 
     def mark_written(self, clothing_id, uid):
         """True if the row changed. With row-level security a blocked update
-        returns [] instead of an error, so the result is checked."""
+        returns [] instead of an error, so the result is checked.
+        `uid` may be None if it arrived damaged; tag_uid then stays empty."""
+        body = {"tag_status": "written"}
+        if uid:
+            body["tag_uid"] = uid
         rows = self._request(
             "PATCH",
             f"clothing?clothing_id=eq.{clothing_id}&tag_status=eq.pending",
-            {"tag_status": "written", "tag_uid": uid},
+            body,
         )
         return bool(rows)
 
@@ -104,8 +111,10 @@ def build_record(row):
     """Same text as buildTagRecord() in web/analysis.js, e.g.
     {"id":"a81f2c3d","cat":3,"col":"BLU","f":[["CO",60],["PES",40]]}"""
     rec = {"id": str(row["clothing_id"])[:8], "cat": row["category_id"], "col": row["colour"]}
+    # Supabase returns percentages like 99.0; write 99, as the website does.
+    pct = lambda v: int(v) if float(v).is_integer() else v
     fibres = [
-        [gf["fibre"]["code"], gf["percentage"]]
+        [gf["fibre"]["code"], pct(gf["percentage"])]
         for gf in row.get("garment_fibre") or []
         if gf.get("fibre")
     ]
@@ -128,6 +137,26 @@ def looks_like_text(line):
 
 
 BOOT_PREFIXES = ("rst:", "ets ", "configsip:", "clk_drv:", "mode:", "load:", "entry ")
+
+
+def is_subsequence(word, of):
+    it = iter(of)
+    return all(c in it for c in word)
+
+
+def parse_wrote(line):
+    """Recognises the ESP32's "@WROTE <clothing_id> <tag uid>" line, even
+    when characters were lost on the cable (it happens while the NFC radio
+    is busy, e.g. "@WOTE c23c1bb1-1d0e-..." or a shortened id).
+
+    Returns (clothing_id or None, tag_uid or None) if the line looks like a
+    write confirmation, otherwise None. A None part was too damaged to use."""
+    parts = line.split()
+    if not parts or len(parts[0]) < 4 or not is_subsequence(parts[0], "@WROTE"):
+        return None
+    clothing_id = parts[1] if len(parts) > 1 and UUID_RE.fullmatch(parts[1]) else None
+    uid = parts[2] if len(parts) > 2 and TAG_UID_RE.fullmatch(parts[2]) else None
+    return clothing_id, uid
 
 
 def find_port():
@@ -180,6 +209,7 @@ def main():
     sent = None          # job last sent to the ESP32: (id, record), "CLEAR" or None
     ready = False        # ESP32 has printed @READY since the port opened
     to_mark = []         # (clothing_id, uid) written to tags, not yet saved
+    confirmed = set()    # clothing_ids already queued: the ESP32 confirms 3 times
     next_poll = 0.0
     buf = b""
 
@@ -192,10 +222,21 @@ def main():
                 line = raw.decode(errors="replace").rstrip("\r")
                 if line == "@READY":
                     ready, sent, next_poll = True, None, 0
-                elif line.startswith("@WROTE "):
-                    parts = line.split()
-                    if len(parts) == 3:
-                        to_mark.append((parts[1], parts[2]))
+                elif (wrote := parse_wrote(line)) is not None:
+                    clothing_id, uid = wrote
+                    job_id = sent[0] if isinstance(sent, tuple) else None
+                    if clothing_id is None and job_id:
+                        # The ESP32 only ever writes the garment it was sent.
+                        clothing_id = job_id
+                    if clothing_id is None:
+                        print(f"[bridge] WARNING: got a damaged write confirmation and "
+                              f"no garment was outstanding, ignoring it: {line!r}")
+                    elif clothing_id not in confirmed:
+                        confirmed.add(clothing_id)
+                        if uid is None:
+                            print(f"[bridge] the tag UID arrived damaged ({line!r}); "
+                                  "saving the garment as written without it")
+                        to_mark.append((clothing_id, uid))
                         sent, next_poll = None, 0
                 elif looks_like_text(line):
                     print(line)
@@ -210,7 +251,20 @@ def main():
                 # ---- Save written tags first, so they aren't sent again
                 while to_mark:
                     clothing_id, uid = to_mark[0]
-                    if db.mark_written(clothing_id, uid):
+                    try:
+                        changed = db.mark_written(clothing_id, uid)
+                    except urllib.error.HTTPError as e:
+                        if not 400 <= e.code < 500:
+                            raise  # server trouble: keep it and retry
+                        # Supabase rejected the request itself; retrying
+                        # won't help and would block every later garment.
+                        print(f"[bridge] WARNING: Supabase refused to mark {clothing_id[:8]} "
+                              f"as written ({e.code}: {e.read().decode(errors='replace')}). "
+                              "Skipping it; it stays pending and will come up again.")
+                        confirmed.discard(clothing_id)
+                        to_mark.pop(0)
+                        continue
+                    if changed:
                         print(f"[bridge] Supabase updated: {clothing_id[:8]} -> tag {uid}. "
                               "The website now shows \"Tag written\".")
                     else:
@@ -242,6 +296,8 @@ def main():
                 if isinstance(e, serial.SerialException):
                     raise
                 print(f"[bridge] Supabase error, retrying: {e}")
+                if isinstance(e, urllib.error.HTTPError):
+                    print(f"[bridge]   details: {e.read().decode(errors='replace')[:300]}")
     except serial.SerialException:
         sys.exit("\nESP32 disconnected.")
     except KeyboardInterrupt:

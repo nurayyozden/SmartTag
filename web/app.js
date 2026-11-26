@@ -15,7 +15,7 @@ import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 import {
   parseFibres, dominantColour, COLOUR_GROUPS, buildTagRecord, PARSER_VERSION, COLOUR_VERSION,
 } from "./analysis.js";
-import { preloadClassifier, classifyGarment } from "./classify.js";
+import { preloadClassifier, classifyGarment, classifierVersion } from "./classify.js";
 import { preloadLabelReader, labelReaderReady, readLabel, LABEL_READER_VERSION } from "./ocr.js";
 
 // Below this probability the guessed garment type is shown as a suggestion
@@ -126,6 +126,8 @@ async function analyse() {
   show("analysing");
   let colour = null;
   let typeResult = null;
+  let typeError = null;   // saved with the prediction if a model fails
+  let labelError = null;
   let parsed = { fibres: [], total: 0, unknownWords: [], confident: false };
   state.ocrText = "";
 
@@ -147,6 +149,7 @@ async function analyse() {
       `Downloading the garment-type model (first time only)… ${Math.round(f * 100)}%`));
   } catch (err) {
     console.warn("Garment type detection failed", err);
+    typeError = describeError(err, state.garmentFile);
   }
 
   if (state.labelFile) {
@@ -159,11 +162,14 @@ async function analyse() {
       parsed = parseFibres(state.ocrText);
     } catch (err) {
       console.warn("Text recognition failed", err);
+      labelError = describeError(err, state.labelFile);
     }
   }
 
   state.predictions = {
     garmentType: typeResult,
+    typeError,
+    labelError,
     colour: colour?.code ?? null,
     fibres: state.labelFile ? { ...parsed, fibres: usableFibres(parsed.fibres) } : null,
   };
@@ -196,6 +202,7 @@ function fillReview(colour, parsed, guesses) {
   let source;
   if (!state.labelFile) source = "No label photo: enter the composition if you know it.";
   else if (usable.length === 0) source = "Couldn't read any fibres from the label. Enter them, or tick “unknown”.";
+  else if (parsed.assumed) source = "Only one fibre was named on the label and no percentage could be read, so it's assumed to be 100%. Check it.";
   else if (parsed.confident) source = "Read from the label. Check the numbers.";
   else source = `Read from the label, but it adds up to ${parsed.total}%. Check the numbers.`;
   if (parsed.unknownWords.length) source += ` Unrecognised: ${parsed.unknownWords.join(", ")}.`;
@@ -367,10 +374,10 @@ async function recordPredictions(clothingId, checked) {
   const row = (model, model_version, predicted, final, extra = {}) =>
     rows.push({ clothing_id: clothingId, model, model_version, predicted, final, ...extra });
 
+  const finalName = state.categories.find((c) => c.category_id === checked.categoryId)?.name
+    ?? String(checked.categoryId);
   if (p.garmentType) {
     const { guesses, embedding, version } = p.garmentType;
-    const finalName = state.categories.find((c) => c.category_id === checked.categoryId)?.name
-      ?? String(checked.categoryId);
     row("garment_type", version, guesses[0]?.name ?? "none", finalName, {
       confidence: guesses[0]?.prob ?? null,
       details: {
@@ -379,6 +386,8 @@ async function recordPredictions(clothingId, checked) {
       },
       embedding: embedding.map((x) => Math.round(x * 1e6) / 1e6),
     });
+  } else if (p.typeError) {
+    row("garment_type", classifierVersion(), "none", finalName, { details: { error: p.typeError } });
   }
 
   row("colour", COLOUR_VERSION, p.colour ?? "none", checked.colour);
@@ -391,6 +400,8 @@ async function recordPredictions(clothingId, checked) {
           ocr_text: state.ocrText,
           parsed_total: p.fibres.total,
           unrecognised_words: p.fibres.unknownWords,
+          assumed_100: p.fibres.assumed || undefined,
+          error: p.labelError ?? undefined,
         },
       });
   }
@@ -401,6 +412,21 @@ async function recordPredictions(clothingId, checked) {
   } catch (err) {
     console.warn("Couldn't record the model predictions (has supabase/prediction.sql been run?)", err);
   }
+}
+
+// What went wrong when a model failed, for the prediction log: the message,
+// the step it failed at (set in classify.js / ocr.js), where in the code, the
+// photo, and the browser (e.g. iOS Safari version).
+function describeError(err, file) {
+  return {
+    message: String(err?.message ?? err).slice(0, 500),
+    name: err?.name ?? null,
+    stage: err?.stage ?? null,
+    stack: err?.stack ? String(err.stack).slice(0, 1500) : null,
+    photo: file ? { type: file.type || null, kb: Math.round(file.size / 1024) } : null,
+    browser: navigator.userAgent,
+    at: new Date().toISOString(),
+  };
 }
 
 // The same fibres always give the same text, so guesses and final answers can
