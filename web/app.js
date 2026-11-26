@@ -92,24 +92,62 @@ function wirePhoto(inputId, previewId, nextId, key) {
     const file = e.target.files?.[0];
     if (!file) return;
     state[key] = file;
-    const img = $(previewId);
-    img.src = URL.createObjectURL(file);
-    img.hidden = false;
     $(nextId).disabled = false;
-    // Start downloading the models while the user is still taking photos.
-    if (key === "garmentFile") { preloadClassifier(); preloadLabelReader(); }
+    showThumbnail($(previewId), file);
+    // Start loading the models while the user is still taking photos: the
+    // classifier first, then the label reader. Loading both at once was too
+    // much for iPhones' memory. (Both calls do nothing once loaded.)
+    if (key === "garmentFile") preloadClassifier().then(preloadLabelReader);
   });
 }
 
-async function colourFromFile(file) {
+// Shows a small copy of the photo. A full-size <img> of a phone photo keeps
+// about 48 MB of decoded pixels in memory for as long as it is on the page.
+async function showThumbnail(img, file) {
+  let url;
+  try {
+    const canvas = await scaledCanvas(file, { maxSide: 800 });
+    url = URL.createObjectURL(await new Promise((ok) => canvas.toBlob(ok, "image/jpeg", 0.85)));
+  } catch {
+    url = URL.createObjectURL(file); // couldn't shrink it: show the original
+  }
+  setPreview(img, url);
+}
+
+function setPreview(img, url) {
+  if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  if (url) { img.src = url; img.hidden = false; } else { img.removeAttribute("src"); img.hidden = true; }
+}
+
+// Decodes a photo and returns a scaled-down canvas: longest side at most
+// `maxSide`, or shortest side at most `minSide`. The full-size decoded image
+// (about 48 MB for a phone photo) is released straight away.
+async function scaledCanvas(file, { maxSide, minSide }) {
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 160 / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
+  try {
+    const { width: w, height: h } = bitmap;
+    const scale = Math.min(1, maxSide ? maxSide / Math.max(w, h) : minSide / Math.min(w, h));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    bitmap.close();
+  }
+}
+
+// The main colour, from a 160-pixel copy of the (already scaled-down) photo.
+function colourFromCanvas(source) {
+  const scale = Math.min(1, 160 / Math.max(source.width, source.height));
+  const w = Math.max(1, Math.round(source.width * scale));
+  const h = Math.max(1, Math.round(source.height * scale));
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0, w, h);
+  ctx.drawImage(source, 0, 0, w, h);
   return dominantColour(ctx.getImageData(0, 0, w, h).data, w, h);
 }
 
@@ -131,9 +169,14 @@ async function analyse() {
   let parsed = { fibres: [], total: 0, unknownWords: [], confident: false };
   state.ocrText = "";
 
+  // The garment photo is decoded once, into a copy whose shortest side is 448
+  // pixels: plenty for the colour and for the classifier (which looks at
+  // 224 x 224), and a fraction of the memory of the 12-megapixel original.
+  let garmentCanvas = null;
   try {
     setProgress(0.05, "Finding the main colour…");
-    colour = await colourFromFile(state.garmentFile);
+    garmentCanvas = await scaledCanvas(state.garmentFile, { minSide: 448 });
+    colour = colourFromCanvas(garmentCanvas);
     state.colourRgb = colour.rgb;
   } catch (err) {
     console.warn("Colour detection failed", err);
@@ -144,7 +187,7 @@ async function analyse() {
   const typeEnd = state.labelFile ? 0.35 : 1;
   try {
     setProgress(0.05, "Working out the garment type…");
-    typeResult = await classifyGarment(state.garmentFile, (f) => setProgress(
+    typeResult = await classifyGarment(garmentCanvas ?? state.garmentFile, (f) => setProgress(
       0.05 + (typeEnd - 0.05) * f,
       `Downloading the garment-type model (first time only)… ${Math.round(f * 100)}%`));
   } catch (err) {
@@ -479,8 +522,7 @@ function resetPhotos() {
     ["in-label", "prev-label", "btn-label-next", "labelFile"],
   ]) {
     $(input).value = "";
-    $(preview).hidden = true;
-    $(preview).removeAttribute("src");
+    setPreview($(preview), null);
     $(next).disabled = true;
     state[key] = null;
   }

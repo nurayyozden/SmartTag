@@ -24,7 +24,7 @@ const SYNONYMS = {
 
 // Saved with each fibre prediction (see supabase/prediction.sql). Increase it
 // when the parsing rules or SYNONYMS change, to compare accuracy before/after.
-export const PARSER_VERSION = "parser-3";
+export const PARSER_VERSION = "parser-4";
 
 const WORD_TO_CODE = new Map();
 for (const [code, words] of Object.entries(SYNONYMS)) {
@@ -39,7 +39,7 @@ export function normalise(text) {
     .normalize("NFD").replace(/[̀-ͯ]/g, "")   // strip accents
     .toUpperCase()
     .replace(/(\d)O(?=\s*%)/g, "$10")                   // OCR: "6O%" -> "60%"
-    .replace(/(\d)\s*%+/g, "$1%")                        // OCR: "60%%" -> "60%"
+    .replace(/(\d)\s*%+[.,:;]*/g, "$1% ")                // "60%%", "95%." -> "60% ", "95% "
     .replace(/\b(\d{1,3}) ?CL\b/g, "$1%")                // OCR: "60CL" -> "60%" (% misread)
     .replace(/\b(\d{1,3}) ?- ?(?=[A-Z]{4})/g, "$1% ")    // OCR: "100-COTON" -> "100% COTON"
     .replace(/\s+/g, " ")
@@ -121,7 +121,7 @@ export function parseFibres(rawText) {
   // fibre.
   const pctFirst = [...section.matchAll(/(\d{1,3})\s*%\s*([A-Z]+)/g)]
     .map((m) => ({ pct: Number(m[1]), word: m[2] }));
-  const wordFirst = [...section.matchAll(/([A-Z]+)\s*(\d{1,3})\s*%/g)]
+  const wordFirst = [...section.matchAll(/([A-Z]+)[\s.,:;]*(\d{1,3})\s*%/g)]
     .map((m) => ({ pct: Number(m[2]), word: m[1] }));
   const a = collectFibres(pctFirst);
   const b = collectFibres(wordFirst);

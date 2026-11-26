@@ -6,11 +6,14 @@
 // time and the browser keeps them.
 //
 // The library imports "onnxruntime-web" and "ppu-ocv/canvas-web" by name; the
-// import map in index.html says where to find them.
+// import map in index.html says where to find them. It shares its ONNX
+// Runtime with the garment classifier (runtime.js), to save memory.
 //
 //   preloadLabelReader()   start downloading early (optional)
 //   labelReaderReady()     true once the models are loaded
 //   readLabel(file)        -> the label's text, lines separated by "\n"
+
+import "./runtime.js";
 
 const PADDLE_URL = "https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.7.1/web/index.js";
 const MODELS = "https://huggingface.co/snowfluke/ppu-paddle-ocr-models/resolve/main";
@@ -27,11 +30,12 @@ const MODEL = {
 
 // Saved with each fibre prediction (see supabase/prediction.sql). Change it
 // when MODEL or MAX_SIDE changes.
-export const LABEL_READER_VERSION = "ppocr-v5-latin-mobile@2000px";
+export const LABEL_READER_VERSION = "ppocr-v5-latin-mobile@1280px";
 
-// Big phone photos are scaled down first. 2000 px keeps small label text
-// readable while using far less memory than a full 12-megapixel image.
-const MAX_SIDE = 2000;
+// Big phone photos are scaled down first. 1280 px read the test labels as well
+// as 2000 px or the full photo did (better, on one), using far less memory:
+// iPhones ran out of memory with larger images.
+const MAX_SIDE = 1280;
 
 let loading = null; // Promise<PaddleOcrService>
 let ready = false;
@@ -39,7 +43,10 @@ let ready = false;
 function load() {
   loading ??= (async () => {
     const { PaddleOcrService } = await import(PADDLE_URL);
-    const service = new PaddleOcrService({ model: MODEL });
+    const service = new PaddleOcrService({
+      model: MODEL,
+      session: { executionProviders: ["wasm"] }, // the shared plain-WebAssembly engine
+    });
     await service.initialize();
     ready = true;
     return service;
@@ -51,7 +58,7 @@ function load() {
 
 /** Starts the model download in the background. */
 export function preloadLabelReader() {
-  load().catch((err) => console.warn("Label reader preload failed", err));
+  return load().then(() => {}, (err) => console.warn("Label reader preload failed", err));
 }
 
 /** True once the models are downloaded and ready. */

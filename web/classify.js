@@ -7,11 +7,20 @@
 // so only the image half of the model is downloaded here (about 87 MB, 8-bit).
 // The browser caches it after the first visit. The photo never leaves the phone.
 //
-//   preloadClassifier()        start downloading early (optional)
-//   classifyGarment(file, cb)  -> { guesses: [{ name, prob }] best first (probs sum to 1),
-//                                   embedding: 512 numbers, version }
+// Memory: it runs on the ONNX Runtime shared with the label reader
+// (runtime.js), and is given a small copy of the photo (see app.js), not the
+// 12-megapixel original: the model only looks at 224 x 224 pixels anyway.
+//
+//   preloadClassifier()           start downloading early (optional); returns a promise
+//   classifyGarment(photo, cb)    photo: a canvas (or File/Blob)
+//                                 -> { guesses: [{ name, prob }] best first (probs sum to 1),
+//                                      embedding: 512 numbers, version }
 
-const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
+import "./runtime.js";
+
+// The build without its own ONNX Runtime: it imports the shared one through
+// the import map in index.html.
+const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.web.min.js";
 const MODEL_ID = "Marqo/marqo-fashionCLIP";
 const LOGIT_SCALE = 100; // CLIP's temperature: turns similarities into confident probabilities
 
@@ -27,7 +36,7 @@ function load() {
       if (p.status === "progress" && p.file.endsWith(".onnx")) progressListener?.(p.progress / 100);
     };
     const [model, processor, embeddings] = await Promise.all([
-      CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { dtype: "q8", progress_callback }),
+      CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { dtype: "q8", device: "wasm", progress_callback }),
       AutoProcessor.from_pretrained(MODEL_ID),
       fetch(new URL("category_embeddings.json", import.meta.url))
         .then((r) => { if (!r.ok) throw new Error(`category_embeddings.json: ${r.status}`); return r.json(); }),
@@ -48,22 +57,29 @@ export function classifierVersion() {
 }
 let lastVersion = MODEL_ID;
 
-/** Starts the model download in the background, e.g. once a photo is chosen. */
+/**
+ * Starts the model download in the background, e.g. once a photo is chosen.
+ * Resolves (never rejects) when it is done, so the label reader can be
+ * loaded after it rather than at the same time.
+ */
 export function preloadClassifier() {
-  load().catch((err) => console.warn("Classifier preload failed", err));
+  return load().then(() => {}, (err) => console.warn("Classifier preload failed", err));
 }
 
 /**
- * Classifies a garment photo (a File or Blob).
- * `onDownload(fraction)` is called while the model is still downloading.
+ * Classifies a garment photo: a canvas (preferred, already scaled down) or a
+ * File/Blob. `onDownload(fraction)` is called while the model is still
+ * downloading.
  */
-export async function classifyGarment(file, onDownload) {
+export async function classifyGarment(photo, onDownload) {
   progressListener = onDownload;
   try {
     let loaded, image, image_embeds;
     try { loaded = await load(); } catch (e) { throw atStage(e, "loading the garment-type model"); }
     const { model, processor, RawImage, categories, version } = loaded;
-    try { image = await RawImage.fromBlob(file); } catch (e) { throw atStage(e, "preparing the photo"); }
+    try {
+      image = photo instanceof HTMLCanvasElement ? RawImage.fromCanvas(photo) : await RawImage.fromBlob(photo);
+    } catch (e) { throw atStage(e, "preparing the photo"); }
     try { ({ image_embeds } = await model(await processor(image))); } catch (e) {
       throw atStage(e, `classifying the photo (${image.width}x${image.height})`);
     }

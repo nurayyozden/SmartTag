@@ -17,6 +17,7 @@ is why the station writes the tags rather than the phone.
 | `config.js` | Your Supabase URL and publishable key |
 | `analysis.js` | Fibre parsing from label text, colour detection, the tag record |
 | `ocr.js` | Reads the care-label text (PaddleOCR, runs in the browser) |
+| `runtime.js` | The one ONNX Runtime both models share (saves memory on phones) |
 | `classify.js` | Garment type from the photo (Marqo-FashionCLIP, runs in the browser) |
 | `category_embeddings.json` | The garment types as the classifier sees them; made by `tools/build_category_embeddings.py` |
 | `app.js` | The flow: photos, text recognition, review, saving, waiting for the station |
@@ -123,6 +124,22 @@ order by created_at desc;
 For the garment type the photo's embedding (512 numbers, not the photo) is
 saved as well. With the type you chose, each one is a labelled example a
 future version of the site can learn from. No photos are stored.
+
+## Memory on phones
+
+Two AI models in one browser tab is a lot for an iPhone; early versions ran
+out of memory after a few garments. What keeps it in check:
+
+- Both models share one ONNX Runtime engine, the plain WebAssembly build
+  (`runtime.js` and the import map in `index.html`). Browsers never hand
+  WebAssembly memory back, so two engines meant two ever-growing blocks.
+- The models load one after the other, never at the same time.
+- They get small copies of the photos: 448 px (shortest side) for the
+  classifier, 1280 px (longest side) for the label reader. Previews are
+  800 px thumbnails, not the full 12-megapixel photos.
+
+If a model still fails on a phone, the error is saved with the prediction
+(see above).
 
 ## Notes and limits
 
