@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Smart Tag</title>
+  <meta name="theme-color" content="#ffffff">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;800&display=swap">
   <link rel="stylesheet" href="style.css">
   <!-- Where the models' libraries find what they import by name. All three
        ONNX Runtime names point at the same file, so the garment classifier
@@ -22,7 +26,7 @@
 </head>
 <body>
   <header>
-    <h1>Smart Tag</h1>
+    <h1 class="wordmark" aria-label="Smart Tag">smart<br>tag</h1>
     <p class="sub">Garment tagging for textile recycling</p>
   </header>
 
@@ -42,7 +46,7 @@
 
     <!-- 1. Garment photo -->
     <section data-step="garment" hidden>
-      <h2><span class="num">1</span> Photo of the garment</h2>
+      <h2><span class="num">Step 1 / 4</span>Photo of the garment</h2>
       <p class="hint">Lay it flat and fill the frame, so the background shows as little as possible.</p>
       <figure class="example">
         <img src="images/example-garment.jpg" width="150" height="200"
@@ -62,7 +66,7 @@
 
     <!-- 2. Care label photo -->
     <section data-step="label" hidden>
-      <h2><span class="num">2</span> Photo of the care label</h2>
+      <h2><span class="num">Step 2 / 4</span>Photo of the care label</h2>
       <p class="hint">Flatten the label and get close, so the fibre percentages are sharp.</p>
       <label class="photo-btn">
         <input id="in-label" type="file" accept="image/*">
@@ -85,7 +89,7 @@
 
     <!-- 4. Review -->
     <section data-step="review" hidden>
-      <h2><span class="num">3</span> Check the details</h2>
+      <h2><span class="num">Step 3 / 4</span>Check the details</h2>
       <p class="hint">Correct anything that's wrong before saving.</p>
 
       <label class="field">Garment type
@@ -124,7 +128,7 @@
 
     <!-- 5. Waiting for the station -->
     <section data-step="tagging" hidden>
-      <h2><span class="num">4</span> Tap a blank tag on the station</h2>
+      <h2><span class="num">Step 4 / 4</span>Tap a blank tag on the station</h2>
       <div class="pulse"></div>
       <p>Hold a blank hang tag on the tagging station's reader. This page updates
         when the tag has been written.</p>
@@ -140,7 +144,7 @@
 
     <!-- 6. Done -->
     <section data-step="done" hidden>
-      <h2 class="ok">Tag written ✓</h2>
+      <h2 class="ok">Tag written</h2>
       <p>Attach the tag to the garment.</p>
       <p class="hint">Tag ID <code id="done-uid"></code></p>
       <button id="btn-again" class="primary">Tag another garment</button>
