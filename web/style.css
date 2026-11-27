@@ -128,9 +128,9 @@ button:disabled { opacity: 0.35; cursor: default; }
 /* After a photo is chosen, the picker shrinks to a "change photo" bar. */
 section:has(.preview:not([hidden])) .photo-btn { min-height: var(--tap); }
 
-.example { margin: 20px 0 0; display: flex; gap: 16px; align-items: flex-end; }
-.example img { display: block; width: 120px; height: auto; background: var(--tint); }
-.example figcaption { color: var(--muted); font-size: 15px; }
+.example { margin: 20px auto 0; width: 150px; text-align: center; }
+.example img { display: block; width: 100%; height: auto; background: var(--tint); }
+.example figcaption { color: var(--muted); font-size: 15px; margin-top: 8px; }
 /* Once the user's own photo is showing, the example is no longer needed. */
 section:has(.preview:not([hidden])) .example { display: none; }
 .preview {
